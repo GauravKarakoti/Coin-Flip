@@ -3,6 +3,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 dotenv.config();
 const app = express();
+app.use(express.json());
 // const keypair = Keypair.fromSecretKey(process.env.PLATFORM_WALLET_PRIVATE_KEY! as unknown as Uint8Array);
 // const connection = new Connection("https://api.devnet.solana.com");
 app.get("/flip", (req, res) => {

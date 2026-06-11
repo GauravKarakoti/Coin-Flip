@@ -109,8 +109,9 @@ export const placeBet = createServerFn({ method: "POST" })
       // crypto.getRandomValues(rand);
       // const outcome: "heads" | "tails" = rand[0] % 2 === 0 ? "heads" : "tails";
       const response = await axios.post(`${BACKEND_URL}/flip`, {
-        expectedLamports
+        amount: expectedLamports
       });
+      
       const won = response.data.won;
       const outcome = won ? data.side : data.side === "heads" ? "tails" : "heads";
 
