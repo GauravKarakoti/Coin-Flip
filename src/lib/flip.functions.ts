@@ -15,6 +15,7 @@ import {
   PLATFORM_WALLET_ADDRESS,
   SOLANA_RPC_URL,
 } from "./solana-config";
+import axios from "axios";
 
 const inputSchema = z.object({
   txSignature: z.string().min(20).max(120),
@@ -22,6 +23,7 @@ const inputSchema = z.object({
   side: z.enum(["heads", "tails"]),
   amountSol: z.number().min(0.1).max(0.6),
 });
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:3000";
 
 function loadPlatformKeypair(): Keypair {
   const raw = process.env.PLATFORM_WALLET_PRIVATE_KEY;
@@ -86,16 +88,20 @@ export const placeBet = createServerFn({ method: "POST" })
     );
     if (!ok) throw new Error("Bet transaction does not match expected transfer");
 
-    // Generate outcome (server-side random)
-    const rand = new Uint8Array(1);
-    crypto.getRandomValues(rand);
-    const outcome: "heads" | "tails" = rand[0] % 2 === 0 ? "heads" : "tails";
-    const won = outcome === data.side;
+    // const rand = new Uint8Array(1);
+    // crypto.getRandomValues(rand);
+    // const outcome: "heads" | "tails" = rand[0] % 2 === 0 ? "heads" : "tails";
+    const response = await axios.post(`${BACKEND_URL}/flip`, {
+      expectedLamports
+    });
+    const won = response.data.won;
+    const outcome = won ? data.side : data.side === "heads" ? "tails" : "heads";
 
     let payoutSignature: string | null = null;
     let payoutLamports = 0;
     if (won) {
-      const gross = expectedLamports * 2;
+      // const gross = expectedLamports * 2;
+      const gross = response.data.amount;
       const fee = Math.floor((gross * PLATFORM_FEE_BPS) / 10_000);
       payoutLamports = gross - fee;
       const ix = SystemProgram.transfer({
