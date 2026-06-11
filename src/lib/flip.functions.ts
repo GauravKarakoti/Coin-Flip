@@ -42,87 +42,108 @@ function loadPlatformKeypair(): Keypair {
 }
 
 export const placeBet = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => inputSchema.parse(d))
+  // Fix the deprecation warning
+  .validator((d: unknown) => inputSchema.parse(d))
   .handler(async ({ data }) => {
-    const connection = new Connection(SOLANA_RPC_URL, "confirmed");
-    const platformKey = loadPlatformKeypair();
-    const platformPubkey = new PublicKey(PLATFORM_WALLET_ADDRESS);
-    if (!platformKey.publicKey.equals(platformPubkey)) {
-      throw new Error("Platform wallet key mismatch");
-    }
+    try {
+      const connection = new Connection(SOLANA_RPC_URL, "confirmed");
+      const platformKey = loadPlatformKeypair();
+      const platformPubkey = new PublicKey(PLATFORM_WALLET_ADDRESS);
+      
+      if (!platformKey.publicKey.equals(platformPubkey)) {
+        throw new Error("Platform wallet key mismatch");
+      }
 
-    const playerPubkey = new PublicKey(data.playerPubkey);
-    const expectedLamports = Math.round(data.amountSol * LAMPORTS_PER_SOL);
-    console.log("Expected bet amount in lamports:", expectedLamports);
-    // Verify the player's bet transaction
-    let tx = await connection.getParsedTransaction(data.txSignature, {
-      commitment: "confirmed",
-      maxSupportedTransactionVersion: 0,
-    });
-    console.log("Initial fetch of transaction:", tx ? "found" : "not found");
-    // Retry briefly if not yet indexed
-    for (let i = 0; i < 5 && !tx; i++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      tx = await connection.getParsedTransaction(data.txSignature, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-    }
-    if (!tx) throw new Error("Bet transaction not found on chain");
-    if (tx.meta?.err) throw new Error("Bet transaction failed on chain");
+      const playerPubkey = new PublicKey(data.playerPubkey);
+      const expectedLamports = Math.round(data.amountSol * LAMPORTS_PER_SOL);
+      console.log("Expected bet amount in lamports:", expectedLamports);
 
-    // Find a system transfer from player -> platform of the expected amount
-    const instrs = tx.transaction.message.instructions as Array<{
-      program?: string;
-      parsed?: {
-        type?: string;
-        info?: { source?: string; destination?: string; lamports?: number };
-      };
-    }>;
-    const ok = instrs.some(
-      (ix) =>
-        ix.program === "system" &&
-        ix.parsed?.type === "transfer" &&
-        ix.parsed.info?.source === playerPubkey.toBase58() &&
-        ix.parsed.info?.destination === platformPubkey.toBase58() &&
-        ix.parsed.info?.lamports === expectedLamports,
-    );
-    if (!ok) throw new Error("Bet transaction does not match expected transfer");
+      console.log("Fetching transaction:", data.txSignature);
+      
+      // Verify the player's bet transaction
+      let tx;
+      try {
+        tx = await connection.getParsedTransaction(data.txSignature, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+      } catch (rpcError) {
+        console.error("🚨 RPC Error during getParsedTransaction:", rpcError);
+        throw new Error("Failed to fetch transaction from Solana RPC.");
+      }
 
-    // const rand = new Uint8Array(1);
-    // crypto.getRandomValues(rand);
-    // const outcome: "heads" | "tails" = rand[0] % 2 === 0 ? "heads" : "tails";
-    const response = await axios.post(`${BACKEND_URL}/flip`, {
-      expectedLamports
-    });
-    const won = response.data.won;
-    const outcome = won ? data.side : data.side === "heads" ? "tails" : "heads";
+      console.log("Initial fetch of transaction:", tx ? "found" : "not found");
 
-    let payoutSignature: string | null = null;
-    let payoutLamports = 0;
-    if (won) {
-      // const gross = expectedLamports * 2;
-      const gross = response.data.amount;
-      const fee = Math.floor((gross * PLATFORM_FEE_BPS) / 10_000);
-      payoutLamports = gross - fee;
-      const ix = SystemProgram.transfer({
-        fromPubkey: platformPubkey,
-        toPubkey: playerPubkey,
-        lamports: payoutLamports,
-      });
-      const payoutTx = new Transaction().add(ix);
-      payoutSignature = await sendAndConfirmTransaction(
-        connection,
-        payoutTx,
-        [platformKey],
-        { commitment: "confirmed" },
+      // Retry briefly if not yet indexed
+      for (let i = 0; i < 5 && !tx; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        console.log(`Retry ${i + 1} fetching transaction...`);
+        tx = await connection.getParsedTransaction(data.txSignature, {
+          commitment: "confirmed",
+          maxSupportedTransactionVersion: 0,
+        });
+      }
+      
+      if (!tx) throw new Error("Bet transaction not found on chain");
+      if (tx.meta?.err) throw new Error("Bet transaction failed on chain");
+
+      // Find a system transfer from player -> platform of the expected amount
+      const instrs = tx.transaction.message.instructions as Array<{
+        program?: string;
+        parsed?: {
+          type?: string;
+          info?: { source?: string; destination?: string; lamports?: number };
+        };
+      }>;
+      const ok = instrs.some(
+        (ix) =>
+          ix.program === "system" &&
+          ix.parsed?.type === "transfer" &&
+          ix.parsed.info?.source === playerPubkey.toBase58() &&
+          ix.parsed.info?.destination === platformPubkey.toBase58() &&
+          ix.parsed.info?.lamports === expectedLamports,
       );
-    }
+      if (!ok) throw new Error("Bet transaction does not match expected transfer");
 
-    return {
-      outcome,
-      won,
-      payoutSignature,
-      payoutSol: payoutLamports / LAMPORTS_PER_SOL,
-    };
+      // const rand = new Uint8Array(1);
+      // crypto.getRandomValues(rand);
+      // const outcome: "heads" | "tails" = rand[0] % 2 === 0 ? "heads" : "tails";
+      const response = await axios.post(`${BACKEND_URL}/flip`, {
+        expectedLamports
+      });
+      const won = response.data.won;
+      const outcome = won ? data.side : data.side === "heads" ? "tails" : "heads";
+
+      let payoutSignature: string | null = null;
+      let payoutLamports = 0;
+      if (won) {
+        // const gross = expectedLamports * 2;
+        const gross = response.data.amount;
+        const fee = Math.floor((gross * PLATFORM_FEE_BPS) / 10_000);
+        payoutLamports = gross - fee;
+        const ix = SystemProgram.transfer({
+          fromPubkey: platformPubkey,
+          toPubkey: playerPubkey,
+          lamports: payoutLamports,
+        });
+        const payoutTx = new Transaction().add(ix);
+        payoutSignature = await sendAndConfirmTransaction(
+          connection,
+          payoutTx,
+          [platformKey],
+          { commitment: "confirmed" },
+        );
+      }
+
+      return {
+        outcome,
+        won,
+        payoutSignature,
+        payoutSol: payoutLamports / LAMPORTS_PER_SOL,
+      };
+    } catch (error) {
+      // This will now print the exact reason the function fails to your terminal
+      console.error("❌ Error in placeBet server function:", error);
+      throw error; 
+    }
   });
