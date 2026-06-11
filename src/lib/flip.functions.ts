@@ -53,12 +53,13 @@ export const placeBet = createServerFn({ method: "POST" })
 
     const playerPubkey = new PublicKey(data.playerPubkey);
     const expectedLamports = Math.round(data.amountSol * LAMPORTS_PER_SOL);
-
+    console.log("Expected bet amount in lamports:", expectedLamports);
     // Verify the player's bet transaction
     let tx = await connection.getParsedTransaction(data.txSignature, {
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     });
+    console.log("Initial fetch of transaction:", tx ? "found" : "not found");
     // Retry briefly if not yet indexed
     for (let i = 0; i < 5 && !tx; i++) {
       await new Promise((r) => setTimeout(r, 1500));
@@ -91,12 +92,10 @@ export const placeBet = createServerFn({ method: "POST" })
     // const rand = new Uint8Array(1);
     // crypto.getRandomValues(rand);
     // const outcome: "heads" | "tails" = rand[0] % 2 === 0 ? "heads" : "tails";
-    console.log("Player bet", data.amountSol, "SOL on", data.side);
     const response = await axios.post(`${BACKEND_URL}/flip`, {
       expectedLamports
     });
     const won = response.data.won;
-    console.log("Player", won ? "won!" : "lost.");
     const outcome = won ? data.side : data.side === "heads" ? "tails" : "heads";
 
     let payoutSignature: string | null = null;
